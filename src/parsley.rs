@@ -1,39 +1,87 @@
-use std::collections::HashMap;
-
-use crate::{Flag, ResContainer, Arg};
+use crate::{Arg, Flag, ResContainer};
+use std::collections::{HashMap, VecDeque};
+use std::env;
 
 pub struct Parsley {
     res_container: ResContainer,
+    app_name: String,
     cli_flags: Vec<Flag>,
     cli_args: Vec<Arg>,
 }
 
 impl Parsley {
-    pub fn parse_input_args(&mut self, input_args: &mut Vec<String>) {
-        let app_name = input_args.remove(0);
+    pub fn parse_input_args(&mut self) {
+        let mut input_args: Vec<String> = env::args().collect();
+
+        self.set_app_name(&mut input_args);
 
         let mut arg_map: HashMap<String, usize> = HashMap::new();
         let mut flag_map: HashMap<String, usize> = HashMap::new();
 
+        self.populate_flag_map(&mut flag_map, &self.cli_flags);
         self.populate_arg_map(&mut arg_map, &self.cli_args);
 
-        self.populate_flag_map(&mut flag_map, &self.cli_flags);
+        self.process_flags(flag_map, &mut input_args);
+        self.process_args(arg_map, &mut input_args);
+    }
 
-        for mut i in 0..input_args.len() {
+    fn process_flags(&mut self, flag_map: HashMap<String, usize>, input_args: &mut Vec<String>) {
+        let mut i: usize = 0;
+        loop {
+            if i >= input_args.len() {
+                break;
+            }
+
             let input_arg = &input_args[i];
 
             if let Some(flag_index) = flag_map.get(input_arg) {
                 let flag = &self.cli_flags[flag_index.clone()];
                 flag.run_action(&mut self.res_container, input_args.remove(i));
                 i = 0;
+                continue;
             }
-        }
 
+            i += 1;
+        }
     }
 
-    fn populate_arg_map(&self, arg_map: &mut HashMap<String, usize>,
-                        args: &Vec<Arg>) 
-    {
+    fn process_args(&mut self, arg_map: HashMap<String, usize>, input_args: &mut Vec<String>) {
+        let mut i: usize = 0;
+        loop {
+            if i >= input_args.len() {
+                break;
+            }
+
+            let input_arg = &input_args[i];
+
+            if let Some(flag_index) = arg_map.get(input_arg) {
+                let arg = &self.cli_args[flag_index.clone()];
+                let mut inputs: Vec<String> = Vec::new();
+                input_args.remove(i); // Discard arg name
+                for _ in 0..*arg.expected_arg_values_count() {
+                    if i < input_args.len() {
+                        inputs.push(input_args.remove(i));
+                    }
+                }
+                arg.run_action(&mut self.res_container, inputs);
+                i = 0;
+                continue;
+            }
+
+            i += 1;
+        }
+    }
+
+    fn set_app_name(&mut self, input_args: &mut Vec<String>) {
+        let mut app_name = input_args.remove(0);
+        let last_separator = app_name.rfind('/');
+        if last_separator.is_some() {
+            app_name = app_name.split_off(last_separator.unwrap() + 1);
+        }
+        self.app_name = app_name;
+    }
+
+    fn populate_arg_map(&self, arg_map: &mut HashMap<String, usize>, args: &Vec<Arg>) {
         for i in 0..args.len() {
             let arg = &args[i];
             arg_map.insert(arg.name().clone(), i);
@@ -43,9 +91,7 @@ impl Parsley {
         }
     }
 
-    fn populate_flag_map(&self, flag_map: &mut HashMap<String, usize>,
-                         flags: &Vec<Flag>) 
-    {
+    fn populate_flag_map(&self, flag_map: &mut HashMap<String, usize>, flags: &Vec<Flag>) {
         for i in 0..flags.len() {
             let flag = &flags[i];
             flag_map.insert(flag.name().clone(), i);
@@ -58,16 +104,16 @@ impl Parsley {
 
 pub struct ParsleyBuilder {
     res_container: ResContainer,
-    arg_actions: Vec<Arg>,
-    arg_flags: Vec<Flag>,
+    cli_args: Vec<Arg>,
+    cli_flags: Vec<Flag>,
 }
 
 impl ParsleyBuilder {
     pub fn new() -> ParsleyBuilder {
         ParsleyBuilder {
             res_container: ResContainer::new(),
-            arg_flags: Vec::new(),
-            arg_actions: Vec::new(),
+            cli_flags: Vec::new(),
+            cli_args: Vec::new(),
         }
     }
 
@@ -77,20 +123,21 @@ impl ParsleyBuilder {
     }
 
     pub fn add_flag(mut self, flag: Flag) -> ParsleyBuilder {
-        self.arg_flags.push(flag);
+        self.cli_flags.push(flag);
         self
     }
 
-    pub fn add_action(mut self, action: Arg) -> ParsleyBuilder {
-        self.arg_actions.push(action);
+    pub fn add_arg(mut self, arg: Arg) -> ParsleyBuilder {
+        self.cli_args.push(arg);
         self
     }
 
-    pub fn build(mut self) -> Parsley {
+    pub fn build(self) -> Parsley {
         return Parsley {
             res_container: self.res_container,
-            cli_args: self.arg_actions,
-            cli_flags: self.arg_flags,
+            app_name: "".to_string(),
+            cli_args: self.cli_args,
+            cli_flags: self.cli_flags,
         };
     }
 }
